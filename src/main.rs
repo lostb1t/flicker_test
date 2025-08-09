@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
-#![allow(warnings)]
 
 use embassy_executor::Spawner;
 use embassy_net::Config;
@@ -12,25 +11,17 @@ use embedded_graphics::Drawable;
 use embedded_graphics::geometry::Point;
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::mono_font::ascii::FONT_5X7;
-use embedded_graphics::mono_font::ascii::FONT_6X10;
-use embedded_graphics::mono_font::ascii::FONT_6X13_BOLD;
 use embedded_graphics::prelude::RgbColor;
 use embedded_graphics::text::Alignment;
 use embedded_graphics::text::Text;
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
-use esp_hal::init;
-use esp_hal::interrupt::Priority;
-use esp_hal::interrupt::software::SoftwareInterruptControl;
-use esp_hal::main;
-use esp_hal::rng;
 // use esp_hal::peripherals;
 use esp_hal::rng::Rng;
 use esp_hal::time::Rate;
 use esp_hal::timer::systimer::SystemTimer;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal_embassy::InterruptExecutor;
 use esp_hub75::Color;
 use esp_hub75::Hub75;
 use esp_hub75::Hub75Pins16;
@@ -44,11 +35,10 @@ use log::*;
 extern crate alloc;
 use alloc::string::ToString;
 use log::info;
-use static_cell::make_static;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const ROWS: usize = 32;
+const ROWS: usize = 64;
 const COLS: usize = 64;
 const BITS: u8 = 1;
 const NROWS: usize = compute_rows(ROWS);
@@ -79,16 +69,13 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
-    let sw_ints = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    let software_interrupt = sw_ints.software_interrupt2;
-
-    let WIFI_SSID = option_env!("WIFI_SSID")
+    let wifi_ssid = option_env!("WIFI_SSID")
         .unwrap_or("default_ssid")
         .to_string();
-    let WIFI_PWD = option_env!("WIFI_PWD")
+    let wifi_pwd = option_env!("WIFI_PWD")
         .unwrap_or("default_password")
         .to_string();
-    info!("WIFI_SSID: {}, WIFI_PWD: {}", WIFI_SSID, WIFI_PWD);
+    info!("WIFI_SSID: {wifi_ssid}, WIFI_PWD: {wifi_pwd}");
     // Init Embassy
     let system_timer = SystemTimer::new(peripherals.SYSTIMER);
     esp_hal_embassy::init(system_timer.alarm0);
@@ -99,7 +86,7 @@ async fn main(spawner: Spawner) {
     );
     let wifi = peripherals.WIFI;
 
-    let (mut controller, interfaces) = esp_wifi::wifi::new(&init, wifi).unwrap();
+    let (mut controller, interfaces) = esp_wifi::wifi::new(init, wifi).unwrap();
 
     // let (wifi_sta_interface, controller) = esp_wifi::wifi::new(init,
     // wifi).unwrap();
@@ -121,8 +108,8 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(net_task(sta_runner));
 
     let config = esp_wifi::wifi::Configuration::Client(esp_wifi::wifi::ClientConfiguration {
-        ssid: WIFI_SSID,
-        password: WIFI_PWD,
+        ssid: wifi_ssid,
+        password: wifi_pwd,
         ..Default::default()
     });
 
@@ -145,23 +132,42 @@ async fn main(spawner: Spawner) {
         embassy_time::Timer::after(embassy_time::Duration::from_millis(1000)).await;
     }
 
+    // // portal3 pins
+    // let pins = Hub75Pins16 {
+    //     red1: peripherals.GPIO42.degrade(),
+    //     grn1: peripherals.GPIO41.degrade(),
+    //     blu1: peripherals.GPIO40.degrade(),
+    //     red2: peripherals.GPIO38.degrade(),
+    //     grn2: peripherals.GPIO39.degrade(),
+    //     blu2: peripherals.GPIO37.degrade(),
+
+    //     addr0: peripherals.GPIO45.degrade(), // A  (⚠ GPIO45 is input-only on S3)
+    //     addr1: peripherals.GPIO36.degrade(), // B
+    //     addr2: peripherals.GPIO48.degrade(), // C
+    //     addr3: peripherals.GPIO35.degrade(), // D
+    //     addr4: peripherals.GPIO0.degrade(),  // E (1/8 scan: leave panel E unconnected)
+
+    //     blank: peripherals.GPIO14.degrade(), // OE
+    //     clock: peripherals.GPIO2.degrade(),  // CLK  ← make sure this matches your wiring
+    //     latch: peripherals.GPIO47.degrade(), // LAT
+    // };
+
+    // liebman "plain" pins
     let pins = Hub75Pins16 {
-        red1: peripherals.GPIO42.degrade(),
-        grn1: peripherals.GPIO41.degrade(),
-        blu1: peripherals.GPIO40.degrade(),
-        red2: peripherals.GPIO38.degrade(),
-        grn2: peripherals.GPIO39.degrade(),
-        blu2: peripherals.GPIO37.degrade(),
-
-        addr0: peripherals.GPIO45.degrade(), // A  (⚠ GPIO45 is input-only on S3)
-        addr1: peripherals.GPIO36.degrade(), // B
-        addr2: peripherals.GPIO48.degrade(), // C
-        addr3: peripherals.GPIO35.degrade(), // D
-        addr4: peripherals.GPIO0.degrade(),  // E (1/8 scan: leave panel E unconnected)
-
-        blank: peripherals.GPIO14.degrade(), // OE
-        clock: peripherals.GPIO2.degrade(),  // CLK  ← make sure this matches your wiring
-        latch: peripherals.GPIO47.degrade(), // LAT
+        red1: peripherals.GPIO38.degrade(),
+        grn1: peripherals.GPIO42.degrade(),
+        blu1: peripherals.GPIO48.degrade(),
+        red2: peripherals.GPIO47.degrade(),
+        grn2: peripherals.GPIO2.degrade(),
+        blu2: peripherals.GPIO21.degrade(),
+        addr0: peripherals.GPIO14.degrade(),
+        addr1: peripherals.GPIO46.degrade(),
+        addr2: peripherals.GPIO13.degrade(),
+        addr3: peripherals.GPIO9.degrade(),
+        addr4: peripherals.GPIO3.degrade(),
+        blank: peripherals.GPIO11.degrade(),
+        clock: peripherals.GPIO12.degrade(),
+        latch: peripherals.GPIO10.degrade(),
     };
 
     let hub75_per = Hub75Peripherals {
@@ -179,28 +185,17 @@ async fn main(spawner: Spawner) {
     let cpu1_fnctn = {
         move || {
             use esp_hal_embassy::Executor;
-            let hp_executor = mk_static!(
-                InterruptExecutor<2>,
-                InterruptExecutor::new(software_interrupt)
-            );
-            let high_pri_spawner = hp_executor.start(Priority::Priority3);
-
-            // hub75 runs as high priority task
-            high_pri_spawner
-                .spawn(hub75_task(hub75_per, &RX, &TX, fb1))
-                .ok();
 
             let lp_executor = mk_static!(Executor, Executor::new());
             // display task runs as low priority task
             lp_executor.run(|spawner| {
-                spawner.spawn(display_task(&TX, &RX, fb0)).ok();
+                spawner.spawn(hub75_task(hub75_per, &RX, &TX, fb1)).ok();
             });
         }
     };
 
     use esp_hal::system::CpuControl;
     use esp_hal::system::Stack;
-    use esp_hal_embassy::Executor;
     let cpu_control = CpuControl::new(peripherals.CPU_CTRL);
     const DISPLAY_STACK_SIZE: usize = 8192;
     let app_core_stack = mk_static!(Stack<DISPLAY_STACK_SIZE>, Stack::new());
@@ -212,15 +207,12 @@ async fn main(spawner: Spawner) {
         .unwrap();
 
     spawner.must_spawn(wifi_spam_task(sta_stack, rng));
+    spawner.must_spawn(display_task(&TX, &RX, fb0));
 
     loop {
         embassy_time::Timer::after(Duration::from_millis(100)).await;
     }
 }
-
-use embassy_net::udp::UdpMetadata;
-use embassy_net::{Ipv4Address, udp::UdpSocket};
-use smoltcp::storage::PacketMetadata;
 
 #[embassy_executor::task]
 pub async fn wifi_spam_task(stack: embassy_net::Stack<'static>, rng: Rng) {
@@ -310,11 +302,11 @@ async fn display_task(
 ) {
     info!("Starting display");
     let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_6X13_BOLD)
+        .font(&FONT_5X7)
         .text_color(Color::YELLOW)
         .background_color(Color::BLACK)
         .build();
-    let point = Point::new(32, 15);
+    let point = Point::new(32, ROWS as i32 / 2 - 1);
 
     loop {
         fb.erase();
@@ -332,10 +324,8 @@ use alloc::string::String;
 use embassy_net::{
     Stack,
     dns::DnsSocket,
-    driver,
     tcp::client::{TcpClient, TcpClientState},
 };
-use embedded_nal_async::{Dns, TcpConnect};
 use reqwless::request::RequestBuilder;
 use reqwless::{
     client::{HttpClient, TlsConfig, TlsVerify},
@@ -360,10 +350,10 @@ pub struct HTTPClient {
     tcp_client_state: TcpClientState<1, 1024, 1024>,
 
     /// Buffer for received TLS data
-    read_record_buffer: [u8; 1 * 1024],
+    read_record_buffer: [u8; 1024],
 
     /// Buffer for transmitted TLS data
-    write_record_buffer: [u8; 1 * 1024], /* tcp_client: TcpClient<'static, 1,                                       * 1024, 1024>,
+    write_record_buffer: [u8; 1024], /* tcp_client: TcpClient<'static, 1,                                       * 1024, 1024>,
                                           * dns_socket: DnsSocket<'static> */
 }
 
@@ -377,13 +367,13 @@ impl HTTPClient {
             stack,
             rng,
             tcp_client_state,
-            read_record_buffer: [0_u8; 1 * 1024],
-            write_record_buffer: [0_u8; 1 * 1024], /* tcp_client,
+            read_record_buffer: [0_u8; 1024],
+            write_record_buffer: [0_u8; 1024], /* tcp_client,
                                                     * dns_socket */
         }
     }
 
-    async fn request<'b>(&mut self, path: &str, body: &'b mut [u8]) -> () {
+    async fn request(&mut self, path: &str, body: &mut [u8]) -> () {
         let url = format!(
             "{}/{}",
             self.config.base_url.trim_end_matches('/'),
@@ -421,10 +411,9 @@ impl HTTPClient {
         let response_body = response.body();
         let mut body_reader = response_body.reader();
         let num_bytes = body_reader.read_to_end(body).await.unwrap();
-        info!("bytes {:?}", num_bytes);
+        info!("bytes {num_bytes:?}");
         // let body_str = core::str::from_utf8(body).unwrap();
         // info!("BODY: {}", body_str);
-        ()
         //  Ok(serde_json::from_slice::<U>(&body[..num_bytes])?)
     }
 }
