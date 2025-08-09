@@ -8,12 +8,12 @@ use embassy_net::Config;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
-use embedded_graphics::mono_font::ascii::FONT_6X10;
-use embedded_graphics::mono_font::ascii::FONT_6X13_BOLD;
 use embedded_graphics::Drawable;
 use embedded_graphics::geometry::Point;
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::mono_font::ascii::FONT_5X7;
+use embedded_graphics::mono_font::ascii::FONT_6X10;
+use embedded_graphics::mono_font::ascii::FONT_6X13_BOLD;
 use embedded_graphics::prelude::RgbColor;
 use embedded_graphics::text::Alignment;
 use embedded_graphics::text::Text;
@@ -21,9 +21,10 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
 use esp_hal::init;
-use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::interrupt::Priority;
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::main;
+use esp_hal::rng;
 // use esp_hal::peripherals;
 use esp_hal::rng::Rng;
 use esp_hal::time::Rate;
@@ -49,7 +50,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 const ROWS: usize = 32;
 const COLS: usize = 64;
-const BITS: u8 = 2;
+const BITS: u8 = 1;
 const NROWS: usize = compute_rows(ROWS);
 const FRAME_COUNT: usize = compute_frame_count(BITS);
 
@@ -78,7 +79,7 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
-      let sw_ints = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    let sw_ints = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let software_interrupt = sw_ints.software_interrupt2;
 
     let WIFI_SSID = option_env!("WIFI_SSID")
@@ -131,7 +132,7 @@ async fn main(spawner: Spawner) {
 
     loop {
         debug!(
-            "link_up={:?}, config_up={}, ip={:?}",
+            "waiting for wifi: link_up={:?}, config_up={}, ip={:?}",
             sta_stack.is_link_up(),
             sta_stack.is_config_up(),
             sta_stack.config_v4().clone().map(|ip| ip.address),
@@ -143,7 +144,6 @@ async fn main(spawner: Spawner) {
         };
         embassy_time::Timer::after(embassy_time::Duration::from_millis(1000)).await;
     }
-
 
     let pins = Hub75Pins16 {
         red1: peripherals.GPIO42.degrade(),
@@ -211,7 +211,7 @@ async fn main(spawner: Spawner) {
         .start_app_core(app_core_stack, cpu1_fnctn)
         .unwrap();
 
-    spawner.must_spawn(wifi_spam_task(sta_stack));
+    spawner.must_spawn(wifi_spam_task(sta_stack, rng));
 
     loop {
         embassy_time::Timer::after(Duration::from_millis(100)).await;
@@ -223,22 +223,31 @@ use embassy_net::{Ipv4Address, udp::UdpSocket};
 use smoltcp::storage::PacketMetadata;
 
 #[embassy_executor::task]
-pub async fn wifi_spam_task(stack: embassy_net::Stack<'static>) {
-    let rx_buf = mk_static!([u8; 512], [0u8; 512]);
-    let tx_buf = mk_static!([u8; 512], [0u8; 512]);
-    let rx_meta = mk_static!([PacketMetadata<UdpMetadata>; 4], [PacketMetadata::EMPTY; 4]);
-    let tx_meta = mk_static!([PacketMetadata<UdpMetadata>; 4], [PacketMetadata::EMPTY; 4]);
-    info!("Starting UDP socket task");
-    let mut socket = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
-    socket.bind(12345).unwrap();
+pub async fn wifi_spam_task(stack: embassy_net::Stack<'static>, rng: Rng) {
+    // let rx_buf = mk_static!([u8; 512], [0u8; 512]);
+    // let tx_buf = mk_static!([u8; 512], [0u8; 512]);
+    // let rx_meta = mk_static!([PacketMetadata<UdpMetadata>; 4], [PacketMetadata::EMPTY; 4]);
+    // let tx_meta = mk_static!([PacketMetadata<UdpMetadata>; 4], [PacketMetadata::EMPTY; 4]);
+    // info!("Starting UDP socket task");
+    // let mut socket = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
+    // socket.bind(12345).unwrap();
 
-    let packet = [0x42; 64];
-    let dest = (Ipv4Address::new(8, 8, 8, 8), 12345);
+    // let packet = [0x42; 64];
+    // let dest = (Ipv4Address::new(8, 8, 8, 8), 12345);
 
+    let mut client = HTTPClient::new(
+        HTTPConfig {
+            base_url: "http://api.wmata.com".into(),
+        },
+        stack,
+        rng,
+    );
     loop {
         info!("SPAM");
-        let _ = socket.send_to(&packet, dest).await;
-        embassy_time::Timer::after(Duration::from_millis(100)).await;
+        client
+            .request("/Rail.svc/json/jStations", &mut [0u8; 32 * 1024])
+            .await;
+        embassy_time::Timer::after(Duration::from_millis(2000)).await;
     }
 }
 
@@ -248,7 +257,6 @@ pub async fn net_task(
 ) {
     runner.run().await
 }
-
 
 #[embassy_executor::task]
 async fn hub75_task(
@@ -290,7 +298,7 @@ async fn hub75_task(
         hub75 = new_hub75;
         result.expect("transfer failed");
 
-// embassy_time::Timer::after(Duration::from_millis(250)).await;
+        // embassy_time::Timer::after(Duration::from_millis(250)).await;
     }
 }
 
@@ -309,11 +317,114 @@ async fn display_task(
     let point = Point::new(32, 15);
 
     loop {
-        // fb.erase();
+        fb.erase();
         Text::with_alignment("Hello, World!", point, text_style, Alignment::Center)
             .draw(fb)
             .expect("failed to draw text");
         tx.signal(fb);
         fb = rx.wait().await;
+    }
+}
+
+//use anyhow::Result;
+use alloc::format;
+use alloc::string::String;
+use embassy_net::{
+    Stack,
+    dns::DnsSocket,
+    driver,
+    tcp::client::{TcpClient, TcpClientState},
+};
+use embedded_nal_async::{Dns, TcpConnect};
+use reqwless::request::RequestBuilder;
+use reqwless::{
+    client::{HttpClient, TlsConfig, TlsVerify},
+    request::Method,
+};
+
+pub struct HTTPConfig {
+    // pub api_key: String,
+    pub base_url: String,
+}
+
+pub struct HTTPClient {
+    config: HTTPConfig,
+
+    /// Wifi stack
+    stack: Stack<'static>,
+
+    /// Random numbers generator
+    rng: esp_hal::rng::Rng,
+
+    /// TCP client state
+    tcp_client_state: TcpClientState<1, 1024, 1024>,
+
+    /// Buffer for received TLS data
+    read_record_buffer: [u8; 1 * 1024],
+
+    /// Buffer for transmitted TLS data
+    write_record_buffer: [u8; 1 * 1024], /* tcp_client: TcpClient<'static, 1,                                       * 1024, 1024>,
+                                          * dns_socket: DnsSocket<'static> */
+}
+
+impl HTTPClient {
+    pub fn new(config: HTTPConfig, stack: Stack<'static>, rng: esp_hal::rng::Rng) -> Self {
+        let tcp_client_state = TcpClientState::<1, 1024, 1024>::new();
+        // let tcp_client = TcpClient::new(stack, &tcp_client_state);
+        // let dns_socket = DnsSocket::new(stack);
+        Self {
+            config,
+            stack,
+            rng,
+            tcp_client_state,
+            read_record_buffer: [0_u8; 1 * 1024],
+            write_record_buffer: [0_u8; 1 * 1024], /* tcp_client,
+                                                    * dns_socket */
+        }
+    }
+
+    async fn request<'b>(&mut self, path: &str, body: &'b mut [u8]) -> () {
+        let url = format!(
+            "{}/{}",
+            self.config.base_url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
+
+        let headers: [(&str, &str); 2] = [
+            ("api_key", "97c18244899442f1b781a0a975807f16"),
+            ("Content-Type", "application/json"),
+        ];
+
+        // let dns_socket = DnsSocket::new(self.stack);
+
+        let seed = self.rng.random() as u64;
+        let tls_config = TlsConfig::new(
+            seed,
+            &mut self.read_record_buffer,
+            &mut self.write_record_buffer,
+            TlsVerify::None,
+        );
+
+        let dns_socket = DnsSocket::new(self.stack);
+        let tcp_client = TcpClient::new(self.stack, &self.tcp_client_state);
+
+        let mut client = HttpClient::new_with_tls(&tcp_client, &dns_socket, tls_config);
+
+        let mut request = client
+            .request(Method::GET, &url)
+            .await
+            .unwrap()
+            .headers(&headers);
+
+        let mut header_buf = [0u8; 2048];
+        let response = request.send(&mut header_buf).await.unwrap();
+        let response_body = response.body();
+        let mut body_reader = response_body.reader();
+        let num_bytes = body_reader.read_to_end(body).await.unwrap();
+        info!("bytes {:?}", num_bytes);
+        // let body_str = core::str::from_utf8(body).unwrap();
+        // info!("BODY: {}", body_str);
+        ()
+        //  Ok(serde_json::from_slice::<U>(&body[..num_bytes])?)
     }
 }
