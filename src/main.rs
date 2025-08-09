@@ -242,47 +242,6 @@ pub async fn wifi_spam_task(stack: embassy_net::Stack<'static>) {
     }
 }
 
-use core::sync::atomic::{AtomicU8, Ordering};
-use embassy_time::{Instant, Timer};
-
-static LOAD_PCT: AtomicU8 = AtomicU8::new(70); // 0..=100, tweak at runtime
-
-#[embassy_executor::task]
-pub async fn cpu_burn_task() {
-    // time-sliced: burn for `on_ms`, then sleep `off_ms`
-    const WINDOW_MS: u64 = 50; // length of one load window
-
-    loop {
-        let pct = LOAD_PCT.load(Ordering::Relaxed).clamp(0, 100);
-        let on_ms  = (WINDOW_MS * pct as u64) / 100;
-        let off_ms = WINDOW_MS - on_ms;
-
-        // burn phase
-        if on_ms > 0 {
-            let deadline = Instant::now() + Duration::from_millis(on_ms);
-            let mut a: u32 = 0x1234_5678;
-            let mut b: u32 = 0x9abc_def0;
-            while Instant::now() < deadline {
-                // cheap integer “work” that stays in registers (very hot)
-                // unroll a bit so it actually burns cycles
-                a ^= b.rotate_left(7).wrapping_add(0xA5A5_5A5A);
-                b = b.wrapping_mul(2654435761).rotate_right(3) ^ a;
-                a = a.wrapping_add(b ^ 0xDEAD_BEEF);
-                b ^= a.rotate_left(11).wrapping_add(0x1337_1337);
-                core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-            }
-        }
-
-        // idle phase
-        if off_ms > 0 {
-            Timer::after(Duration::from_millis(off_ms)).await;
-        } else {
-            // still yield once so we never starve other tasks at 100%
-            embassy_time::yield_now().await;
-        }
-    }
-}
-
 #[embassy_executor::task(pool_size = 3)]
 pub async fn net_task(
     mut runner: embassy_net::Runner<'static, esp_wifi::wifi::WifiDevice<'static>>,
