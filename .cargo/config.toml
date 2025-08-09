@@ -1,0 +1,18 @@
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --chip esp32s3"
+
+[env]
+# ESP_LOG="info"
+# RUST_LOG="info"
+ESP_LOG = "info,flicker=debug"
+RUST_LOG = "info,flicker=debug"
+# ESP_HAL_CONFIG_PSRAM_MODE="octal"
+
+[build]
+rustflags = [
+  "-C", "link-arg=-nostartfiles",
+]
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]
